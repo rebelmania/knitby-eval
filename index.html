@@ -28,7 +28,35 @@
       margin: 0 auto;
     }
     h1 { font-size: 1.5rem; margin-bottom: 4px; }
+    h2 { font-size: 1.1rem; }
     .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 24px; }
+    .section-title { font-size: 1rem; margin: 32px 0 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.75rem; }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 24px;
+      border-bottom: 2px solid var(--border);
+    }
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      font-weight: 500;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      border-radius: 0;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
 
     /* Summary cards */
     .summary {
@@ -61,9 +89,7 @@
     }
 
     /* Table */
-    .table-wrap {
-      overflow-x: auto;
-    }
+    .table-wrap { overflow-x: auto; }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -86,6 +112,10 @@
     tr:hover { background: var(--surface); }
     .score-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
 
+    /* Checkbox column */
+    .cb-col { width: 36px; text-align: center; }
+    .cb-col input { cursor: pointer; accent-color: var(--accent); width: 16px; height: 16px; }
+
     /* Detail panel */
     .detail-panel {
       background: var(--surface);
@@ -102,7 +132,6 @@
       align-items: center;
       margin-bottom: 16px;
     }
-    .detail-header h2 { font-size: 1.1rem; }
     .close-btn {
       background: none;
       border: none;
@@ -130,9 +159,8 @@
       color: var(--yellow);
       padding: 2px 0;
     }
-    .issue-list li::before { content: "  "; }
 
-    .actions { margin-bottom: 24px; }
+    .actions { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
     button {
       background: var(--accent);
       color: white;
@@ -148,11 +176,27 @@
     .btn-secondary {
       background: var(--surface2);
       border: 1px solid var(--border);
-      margin-left: 8px;
+    }
+    .btn-danger {
+      background: var(--red);
+    }
+    .selection-count {
+      color: var(--text-dim);
+      font-size: 0.85rem;
     }
 
     .loading { text-align: center; padding: 40px; color: var(--text-dim); }
     .empty { text-align: center; padding: 40px; color: var(--text-dim); }
+
+    .status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .status-evaluated { background: #1b3a1b; color: var(--green); }
+    .status-pending { background: #3a2e1b; color: var(--yellow); }
 
     /* Config banner */
     .config-banner {
@@ -184,7 +228,7 @@
   <h1>Knitby Pattern Eval Dashboard</h1>
   <p class="subtitle">LLM extraction quality scores — completeness, faithfulness, size resolution</p>
 
-  <!-- Config (shown if no env set) -->
+  <!-- Config -->
   <div id="config-banner" class="config-banner" style="display:none;">
     <strong>Configure Supabase connection</strong>
     <label>Supabase URL
@@ -193,39 +237,71 @@
     <label>Supabase Anon Key
       <input id="cfg-key" type="text" placeholder="eyJ...">
     </label>
-    <label>Edge Function URL (optional — for triggering evals)
+    <label>Edge Function URL (for triggering evals)
       <input id="cfg-fn-url" type="text" placeholder="https://xxx.supabase.co/functions/v1/run-eval">
     </label>
     <button onclick="saveConfig()" style="margin-top:12px;">Save & Load</button>
   </div>
 
-  <div class="actions">
-    <button id="btn-run" onclick="triggerEval()" disabled>Run Eval</button>
-    <button class="btn-secondary" onclick="loadData()">Refresh</button>
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('cached')">Cached Patterns</button>
+    <button class="tab" onclick="switchTab('results')">Eval Results</button>
   </div>
 
-  <!-- Summary -->
-  <div class="summary" id="summary"></div>
+  <!-- Tab 1: Cached patterns (pick which to evaluate) -->
+  <div id="tab-cached" class="tab-content active">
+    <div class="actions">
+      <button id="btn-eval-selected" onclick="evalSelected()" disabled>Evaluate Selected</button>
+      <button class="btn-secondary" onclick="loadCached()">Refresh</button>
+      <span class="selection-count" id="selection-count"></span>
+    </div>
 
-  <!-- Results table -->
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Pattern</th>
-          <th>Sizes</th>
-          <th>Structural</th>
-          <th>Completeness</th>
-          <th>Faithfulness</th>
-          <th>Size Res.</th>
-          <th>Overall</th>
-          <th>Evaluated</th>
-        </tr>
-      </thead>
-      <tbody id="results-body">
-        <tr><td colspan="8" class="loading">Loading...</td></tr>
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="cb-col"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
+            <th>Pattern</th>
+            <th>Sizes</th>
+            <th>Model</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="cached-body">
+          <tr><td colspan="5" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Tab 2: Eval results -->
+  <div id="tab-results" class="tab-content">
+    <div class="actions">
+      <button class="btn-secondary" onclick="loadResults()">Refresh</button>
+    </div>
+
+    <div class="summary" id="summary"></div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Pattern</th>
+            <th>Sizes</th>
+            <th>Structural</th>
+            <th>Completeness</th>
+            <th>Faithfulness</th>
+            <th>Size Res.</th>
+            <th>Overall</th>
+            <th>Evaluated</th>
+          </tr>
+        </thead>
+        <tbody id="results-body">
+          <tr><td colspan="8" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <!-- Detail panel -->
@@ -239,7 +315,11 @@
 
   <script>
     let supabaseClient = null;
+    let cachedPatterns = [];
     let evalData = [];
+    let selectedHashes = new Set();
+
+    // --- Config ---
 
     function getConfig() {
       const stored = localStorage.getItem('knitby-eval-config');
@@ -255,7 +335,21 @@
       location.reload();
     }
 
+    // --- Tabs ---
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.getElementById(`tab-${tab}`).classList.add('active');
+      document.querySelector(`.tab[onclick*="${tab}"]`).classList.add('active');
+      closeDetail();
+      if (tab === 'results') loadResults();
+    }
+
+    // --- Helpers ---
+
     function scoreColor(score) {
+      if (score == null) return 'var(--text-dim)';
       if (score >= 0.85) return 'var(--green)';
       if (score >= 0.6) return 'var(--yellow)';
       return 'var(--red)';
@@ -267,6 +361,7 @@
     }
 
     function timeAgo(dateStr) {
+      if (!dateStr) return '-';
       const d = new Date(dateStr);
       const diff = Date.now() - d.getTime();
       const mins = Math.floor(diff / 60000);
@@ -275,6 +370,176 @@
       if (hrs < 24) return `${hrs}h ago`;
       const days = Math.floor(hrs / 24);
       return `${days}d ago`;
+    }
+
+    // --- Cached patterns tab ---
+
+    async function loadCached() {
+      if (!supabaseClient) return;
+      try {
+        // Load cached patterns
+        const { data: cached, error: cacheErr } = await supabaseClient
+          .from('pdf_pattern_cache')
+          .select('pdf_hash, raw_text, structured_json, model_version, created_at')
+          .not('raw_text', 'is', null)
+          .not('structured_json', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (cacheErr) throw cacheErr;
+
+        // Load existing eval hashes for status
+        const { data: evals } = await supabaseClient
+          .from('eval_results')
+          .select('pdf_hash, evaluated_at')
+          .order('evaluated_at', { ascending: false });
+
+        const evalMap = {};
+        for (const e of (evals || [])) {
+          if (!evalMap[e.pdf_hash]) evalMap[e.pdf_hash] = e.evaluated_at;
+        }
+
+        cachedPatterns = (cached || []).map(c => {
+          const sj = c.structured_json || {};
+          return {
+            pdf_hash: c.pdf_hash,
+            title: sj.title || c.pdf_hash?.substring(0, 12),
+            sizes: sj.sizes || [],
+            model_version: c.model_version,
+            created_at: c.created_at,
+            evaluated_at: evalMap[c.pdf_hash] || null,
+          };
+        });
+
+        selectedHashes.clear();
+        renderCachedTable();
+      } catch (e) {
+        console.error('Load cached failed:', e);
+        document.getElementById('cached-body').innerHTML =
+          `<tr><td colspan="5" class="empty">Failed to load: ${e.message}</td></tr>`;
+      }
+    }
+
+    function renderCachedTable() {
+      const tbody = document.getElementById('cached-body');
+      if (!cachedPatterns.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No cached patterns with raw text found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = cachedPatterns.map((p, i) => {
+        const checked = selectedHashes.has(p.pdf_hash) ? 'checked' : '';
+        const statusHtml = p.evaluated_at
+          ? `<span class="status-badge status-evaluated">Evaluated ${timeAgo(p.evaluated_at)}</span>`
+          : `<span class="status-badge status-pending">Not evaluated</span>`;
+        return `<tr>
+          <td class="cb-col"><input type="checkbox" ${checked} onchange="toggleSelect('${p.pdf_hash}', this)"></td>
+          <td>${p.title}</td>
+          <td>${p.sizes.length || '-'}</td>
+          <td style="color:var(--text-dim)">${p.model_version || '-'}</td>
+          <td>${statusHtml}</td>
+        </tr>`;
+      }).join('');
+
+      updateSelectionCount();
+    }
+
+    function toggleSelect(hash, checkbox) {
+      if (checkbox.checked) {
+        selectedHashes.add(hash);
+      } else {
+        selectedHashes.delete(hash);
+      }
+      updateSelectionCount();
+    }
+
+    function toggleSelectAll(checkbox) {
+      if (checkbox.checked) {
+        cachedPatterns.forEach(p => selectedHashes.add(p.pdf_hash));
+      } else {
+        selectedHashes.clear();
+      }
+      renderCachedTable();
+      document.getElementById('select-all').checked = checkbox.checked;
+    }
+
+    function updateSelectionCount() {
+      const count = selectedHashes.size;
+      document.getElementById('selection-count').textContent =
+        count > 0 ? `${count} selected` : '';
+      document.getElementById('btn-eval-selected').disabled = count === 0;
+    }
+
+    async function evalSelected() {
+      const config = getConfig();
+      if (!config?.fnUrl) {
+        alert('Set the Edge Function URL in config first');
+        return;
+      }
+      if (selectedHashes.size === 0) return;
+
+      const btn = document.getElementById('btn-eval-selected');
+      const hashes = [...selectedHashes];
+      btn.disabled = true;
+      btn.textContent = `Evaluating ${hashes.length}...`;
+
+      let completed = 0;
+      let failed = 0;
+
+      // Evaluate one at a time to avoid timeout
+      for (const hash of hashes) {
+        try {
+          btn.textContent = `Evaluating ${++completed}/${hashes.length}...`;
+          const res = await fetch(config.fnUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${config.key}`,
+            },
+            body: JSON.stringify({ pdf_hash: hash, limit: 1 }),
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            console.error(`Eval failed for ${hash}: ${text}`);
+            failed++;
+          }
+        } catch (e) {
+          console.error(`Eval failed for ${hash}:`, e);
+          failed++;
+        }
+      }
+
+      const msg = failed > 0
+        ? `Done: ${completed - failed} succeeded, ${failed} failed`
+        : `Done: ${completed} patterns evaluated`;
+      alert(msg);
+
+      selectedHashes.clear();
+      btn.textContent = 'Evaluate Selected';
+      btn.disabled = true;
+      await loadCached();
+    }
+
+    // --- Results tab ---
+
+    async function loadResults() {
+      if (!supabaseClient) return;
+      try {
+        const { data, error } = await supabaseClient
+          .from('eval_results')
+          .select('*')
+          .order('evaluated_at', { ascending: false })
+          .limit(50);
+
+        if (error) throw error;
+        evalData = data || [];
+        renderSummary(evalData);
+        renderResultsTable(evalData);
+      } catch (e) {
+        console.error('Load results failed:', e);
+        document.getElementById('results-body').innerHTML =
+          `<tr><td colspan="8" class="empty">Failed to load: ${e.message}</td></tr>`;
+      }
     }
 
     function renderSummary(data) {
@@ -308,10 +573,10 @@
       }).join('');
     }
 
-    function renderTable(data) {
+    function renderResultsTable(data) {
       const tbody = document.getElementById('results-body');
       if (!data.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty">No eval results yet. Click "Run Eval" to evaluate cached patterns.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">No eval results yet. Go to Cached Patterns tab and select patterns to evaluate.</td></tr>';
         return;
       }
 
@@ -324,7 +589,7 @@
           <td class="score-cell" style="color:${scoreColor(r.faithfulness_score)}">${formatScore(r.faithfulness_score)}</td>
           <td class="score-cell" style="color:${scoreColor(r.size_resolution_score)}">${formatScore(r.size_resolution_score)}</td>
           <td class="score-cell" style="color:${scoreColor(r.overall_score)}">${formatScore(r.overall_score)}</td>
-          <td style="color:var(--text-dim)">${r.evaluated_at ? timeAgo(r.evaluated_at) : '-'}</td>
+          <td style="color:var(--text-dim)">${timeAgo(r.evaluated_at)}</td>
         </tr>
       `).join('');
     }
@@ -368,70 +633,19 @@
       document.getElementById('detail-panel').classList.remove('open');
     }
 
-    async function loadData() {
-      if (!supabaseClient) return;
-      try {
-        const { data, error } = await supabaseClient
-          .from('eval_results')
-          .select('*')
-          .order('evaluated_at', { ascending: false })
-          .limit(50);
+    // --- Init ---
 
-        if (error) throw error;
-        evalData = data || [];
-        renderSummary(evalData);
-        renderTable(evalData);
-      } catch (e) {
-        console.error('Load failed:', e);
-        document.getElementById('results-body').innerHTML =
-          `<tr><td colspan="8" class="empty">Failed to load: ${e.message}</td></tr>`;
-      }
-    }
-
-    async function triggerEval() {
-      const config = getConfig();
-      if (!config?.fnUrl) {
-        alert('Set the Edge Function URL in config first');
-        return;
-      }
-      const btn = document.getElementById('btn-run');
-      btn.disabled = true;
-      btn.textContent = 'Running...';
-      try {
-        const res = await fetch(config.fnUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.key}`,
-          },
-          body: JSON.stringify({ limit: 10 }),
-        });
-        const result = await res.json();
-        alert(`Eval complete: ${result.message}`);
-        await loadData();
-      } catch (e) {
-        alert(`Eval failed: ${e.message}`);
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Run Eval';
-      }
-    }
-
-    // Init
     (function init() {
       const config = getConfig();
       if (!config) {
         document.getElementById('config-banner').style.display = 'block';
-        document.getElementById('results-body').innerHTML =
-          '<tr><td colspan="8" class="empty">Configure Supabase connection above to get started.</td></tr>';
+        document.getElementById('cached-body').innerHTML =
+          '<tr><td colspan="5" class="empty">Configure Supabase connection above to get started.</td></tr>';
         return;
       }
 
       supabaseClient = supabase.createClient(config.url, config.key);
-      if (config.fnUrl) {
-        document.getElementById('btn-run').disabled = false;
-      }
-      loadData();
+      loadCached();
     })();
   </script>
 </body>
