@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Knitby Pattern Eval Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --surface2: #242424;
+      --border: #333;
+      --text: #e0e0e0;
+      --text-dim: #888;
+      --accent: #7c6bf0;
+      --green: #4caf50;
+      --yellow: #ff9800;
+      --red: #f44336;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 4px; }
+    .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 24px; }
+
+    /* Summary cards */
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card-label { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+    .card-value { font-size: 1.8rem; font-weight: 700; margin-top: 4px; }
+
+    /* Score bar */
+    .score-bar {
+      height: 6px;
+      background: var(--surface2);
+      border-radius: 3px;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+    .score-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.3s;
+    }
+
+    /* Table */
+    .table-wrap {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    tr:hover { background: var(--surface); }
+    .score-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+    /* Detail panel */
+    .detail-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 24px;
+      display: none;
+    }
+    .detail-panel.open { display: block; }
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .detail-header h2 { font-size: 1.1rem; }
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 1.2rem;
+      cursor: pointer;
+    }
+    .dimension {
+      margin-bottom: 16px;
+      padding: 12px;
+      background: var(--surface2);
+      border-radius: 6px;
+    }
+    .dimension-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .dimension-name { font-weight: 600; font-size: 0.9rem; }
+    .reasoning { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 8px; }
+    .issue-list { list-style: none; }
+    .issue-list li {
+      font-size: 0.8rem;
+      color: var(--yellow);
+      padding: 2px 0;
+    }
+    .issue-list li::before { content: "  "; }
+
+    .actions { margin-bottom: 24px; }
+    button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    button:hover { opacity: 0.9; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      margin-left: 8px;
+    }
+
+    .loading { text-align: center; padding: 40px; color: var(--text-dim); }
+    .empty { text-align: center; padding: 40px; color: var(--text-dim); }
+
+    /* Config banner */
+    .config-banner {
+      background: var(--surface);
+      border: 1px solid var(--yellow);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+      font-size: 0.85rem;
+    }
+    .config-banner input {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 4px;
+      width: 300px;
+      margin: 4px 8px 4px 0;
+      font-size: 0.85rem;
+    }
+    .config-banner label {
+      display: block;
+      margin-top: 8px;
+      color: var(--text-dim);
+    }
+  </style>
+</head>
+<body>
+  <h1>Knitby Pattern Eval Dashboard</h1>
+  <p class="subtitle">LLM extraction quality scores — completeness, faithfulness, size resolution</p>
+
+  <!-- Config (shown if no env set) -->
+  <div id="config-banner" class="config-banner" style="display:none;">
+    <strong>Configure Supabase connection</strong>
+    <label>Supabase URL
+      <input id="cfg-url" type="text" placeholder="https://xxx.supabase.co">
+    </label>
+    <label>Supabase Anon Key
+      <input id="cfg-key" type="text" placeholder="eyJ...">
+    </label>
+    <label>Edge Function URL (optional — for triggering evals)
+      <input id="cfg-fn-url" type="text" placeholder="https://xxx.supabase.co/functions/v1/run-eval">
+    </label>
+    <button onclick="saveConfig()" style="margin-top:12px;">Save & Load</button>
+  </div>
+
+  <div class="actions">
+    <button id="btn-run" onclick="triggerEval()" disabled>Run Eval</button>
+    <button class="btn-secondary" onclick="loadData()">Refresh</button>
+  </div>
+
+  <!-- Summary -->
+  <div class="summary" id="summary"></div>
+
+  <!-- Results table -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Pattern</th>
+          <th>Sizes</th>
+          <th>Structural</th>
+          <th>Completeness</th>
+          <th>Faithfulness</th>
+          <th>Size Res.</th>
+          <th>Overall</th>
+          <th>Evaluated</th>
+        </tr>
+      </thead>
+      <tbody id="results-body">
+        <tr><td colspan="8" class="loading">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Detail panel -->
+  <div class="detail-panel" id="detail-panel">
+    <div class="detail-header">
+      <h2 id="detail-title"></h2>
+      <button class="close-btn" onclick="closeDetail()">x</button>
+    </div>
+    <div id="detail-content"></div>
+  </div>
+
+  <script>
+    let supabaseClient = null;
+    let evalData = [];
+
+    function getConfig() {
+      const stored = localStorage.getItem('knitby-eval-config');
+      return stored ? JSON.parse(stored) : null;
+    }
+
+    function saveConfig() {
+      const url = document.getElementById('cfg-url').value.trim();
+      const key = document.getElementById('cfg-key').value.trim();
+      const fnUrl = document.getElementById('cfg-fn-url').value.trim();
+      if (!url || !key) return alert('URL and Key are required');
+      localStorage.setItem('knitby-eval-config', JSON.stringify({ url, key, fnUrl }));
+      location.reload();
+    }
+
+    function scoreColor(score) {
+      if (score >= 0.85) return 'var(--green)';
+      if (score >= 0.6) return 'var(--yellow)';
+      return 'var(--red)';
+    }
+
+    function formatScore(score) {
+      if (score == null) return '-';
+      return (score * 100).toFixed(0) + '%';
+    }
+
+    function timeAgo(dateStr) {
+      const d = new Date(dateStr);
+      const diff = Date.now() - d.getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      const days = Math.floor(hrs / 24);
+      return `${days}d ago`;
+    }
+
+    function renderSummary(data) {
+      const el = document.getElementById('summary');
+      if (!data.length) { el.innerHTML = ''; return; }
+
+      const avg = (field) => data.reduce((s, r) => s + (r[field] ?? 0), 0) / data.length;
+
+      const metrics = [
+        { label: 'Patterns', value: data.length, isCount: true },
+        { label: 'Avg Overall', value: avg('overall_score') },
+        { label: 'Avg Completeness', value: avg('completeness_score') },
+        { label: 'Avg Faithfulness', value: avg('faithfulness_score') },
+        { label: 'Avg Size Resolution', value: avg('size_resolution_score') },
+        { label: 'Avg Structural', value: avg('structural_score') },
+      ];
+
+      el.innerHTML = metrics.map(m => {
+        if (m.isCount) {
+          return `<div class="card">
+            <div class="card-label">${m.label}</div>
+            <div class="card-value">${m.value}</div>
+          </div>`;
+        }
+        const color = scoreColor(m.value);
+        return `<div class="card">
+          <div class="card-label">${m.label}</div>
+          <div class="card-value" style="color:${color}">${formatScore(m.value)}</div>
+          <div class="score-bar"><div class="score-fill" style="width:${m.value*100}%;background:${color}"></div></div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderTable(data) {
+      const tbody = document.getElementById('results-body');
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">No eval results yet. Click "Run Eval" to evaluate cached patterns.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = data.map((r, i) => `
+        <tr style="cursor:pointer" onclick="showDetail(${i})">
+          <td>${r.pattern_title || r.pdf_hash?.substring(0, 12) || '?'}</td>
+          <td>${r.size_count ?? '-'}</td>
+          <td class="score-cell" style="color:${scoreColor(r.structural_score)}">${formatScore(r.structural_score)}</td>
+          <td class="score-cell" style="color:${scoreColor(r.completeness_score)}">${formatScore(r.completeness_score)}</td>
+          <td class="score-cell" style="color:${scoreColor(r.faithfulness_score)}">${formatScore(r.faithfulness_score)}</td>
+          <td class="score-cell" style="color:${scoreColor(r.size_resolution_score)}">${formatScore(r.size_resolution_score)}</td>
+          <td class="score-cell" style="color:${scoreColor(r.overall_score)}">${formatScore(r.overall_score)}</td>
+          <td style="color:var(--text-dim)">${r.evaluated_at ? timeAgo(r.evaluated_at) : '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    function showDetail(index) {
+      const r = evalData[index];
+      if (!r) return;
+
+      document.getElementById('detail-title').textContent =
+        r.pattern_title || r.pdf_hash?.substring(0, 12);
+
+      const dims = [
+        { name: 'Completeness', score: r.completeness_score, reasoning: r.completeness_reasoning, issues: r.completeness_issues },
+        { name: 'Faithfulness', score: r.faithfulness_score, reasoning: r.faithfulness_reasoning, issues: r.faithfulness_issues },
+        { name: 'Size Resolution', score: r.size_resolution_score, reasoning: r.size_resolution_reasoning, issues: r.size_resolution_issues },
+        { name: 'Structural', score: r.structural_score, reasoning: null, issues: r.structural_issues },
+      ];
+
+      document.getElementById('detail-content').innerHTML = dims.map(d => {
+        const color = scoreColor(d.score);
+        const issueList = (d.issues ?? []);
+        const issueItems = Array.isArray(issueList)
+          ? issueList.map(i => typeof i === 'string' ? i : `[${i.severity}] ${i.code}: ${i.message}`).map(t => `<li>${t}</li>`).join('')
+          : '';
+        return `<div class="dimension">
+          <div class="dimension-header">
+            <span class="dimension-name">${d.name}</span>
+            <span class="score-cell" style="color:${color}">${formatScore(d.score)}</span>
+          </div>
+          ${d.reasoning ? `<p class="reasoning">${d.reasoning}</p>` : ''}
+          ${issueItems ? `<ul class="issue-list">${issueItems}</ul>` : ''}
+        </div>`;
+      }).join('');
+
+      const panel = document.getElementById('detail-panel');
+      panel.classList.add('open');
+      panel.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function closeDetail() {
+      document.getElementById('detail-panel').classList.remove('open');
+    }
+
+    async function loadData() {
+      if (!supabaseClient) return;
+      try {
+        const { data, error } = await supabaseClient
+          .from('eval_results')
+          .select('*')
+          .order('evaluated_at', { ascending: false })
+          .limit(50);
+
+        if (error) throw error;
+        evalData = data || [];
+        renderSummary(evalData);
+        renderTable(evalData);
+      } catch (e) {
+        console.error('Load failed:', e);
+        document.getElementById('results-body').innerHTML =
+          `<tr><td colspan="8" class="empty">Failed to load: ${e.message}</td></tr>`;
+      }
+    }
+
+    async function triggerEval() {
+      const config = getConfig();
+      if (!config?.fnUrl) {
+        alert('Set the Edge Function URL in config first');
+        return;
+      }
+      const btn = document.getElementById('btn-run');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      try {
+        const res = await fetch(config.fnUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.key}`,
+          },
+          body: JSON.stringify({ limit: 10 }),
+        });
+        const result = await res.json();
+        alert(`Eval complete: ${result.message}`);
+        await loadData();
+      } catch (e) {
+        alert(`Eval failed: ${e.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Eval';
+      }
+    }
+
+    // Init
+    (function init() {
+      const config = getConfig();
+      if (!config) {
+        document.getElementById('config-banner').style.display = 'block';
+        document.getElementById('results-body').innerHTML =
+          '<tr><td colspan="8" class="empty">Configure Supabase connection above to get started.</td></tr>';
+        return;
+      }
+
+      supabaseClient = supabase.createClient(config.url, config.key);
+      if (config.fnUrl) {
+        document.getElementById('btn-run').disabled = false;
+      }
+      loadData();
+    })();
+  </script>
+</body>
+</html>
