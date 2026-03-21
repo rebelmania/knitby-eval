@@ -269,11 +269,12 @@
             <th>Sizes</th>
             <th>Model</th>
             <th>Cached</th>
+            <th>Updated</th>
             <th>Status</th>
           </tr>
         </thead>
         <tbody id="cached-body">
-          <tr><td colspan="6" class="loading">Loading...</td></tr>
+          <tr><td colspan="7" class="loading">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -407,7 +408,7 @@
       const config = getConfig();
       if (!config?.fnUrl) {
         document.getElementById('cached-body').innerHTML =
-          '<tr><td colspan="6" class="empty">Set the Edge Function URL in config first.</td></tr>';
+          '<tr><td colspan="7" class="empty">Set the Edge Function URL in config first.</td></tr>';
         return;
       }
       try {
@@ -418,14 +419,14 @@
       } catch (e) {
         console.error('Load cached failed:', e);
         document.getElementById('cached-body').innerHTML =
-          `<tr><td colspan="6" class="empty">Failed to load: ${e.message}</td></tr>`;
+          `<tr><td colspan="7" class="empty">Failed to load: ${e.message}</td></tr>`;
       }
     }
 
     function renderCachedTable() {
       const tbody = document.getElementById('cached-body');
       if (!cachedPatterns.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty">No cached patterns with raw text found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">No cached patterns with raw text found.</td></tr>';
         return;
       }
 
@@ -440,6 +441,7 @@
           <td>${p.sizes.length || '-'}</td>
           <td style="color:var(--text-dim)">${p.model_version || '-'}</td>
           <td style="color:var(--text-dim)">${formatDate(p.cached_at)}</td>
+          <td style="color:var(--text-dim)">${formatDate(p.updated_at)}</td>
           <td>${statusHtml}</td>
         </tr>`;
       }).join('');
@@ -690,7 +692,7 @@
       if (!config) {
         document.getElementById('config-banner').style.display = 'block';
         document.getElementById('cached-body').innerHTML =
-          '<tr><td colspan="6" class="empty">Configure Supabase connection above to get started.</td></tr>';
+          '<tr><td colspan="7" class="empty">Configure Supabase connection above to get started.</td></tr>';
         return;
       }
 
