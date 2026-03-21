@@ -250,6 +250,7 @@
   <div class="tabs">
     <button class="tab active" onclick="switchTab('cached')">Cached Patterns</button>
     <button class="tab" onclick="switchTab('results')">Eval Results</button>
+    <button class="tab" onclick="switchTab('playground')">Playground</button>
   </div>
 
   <!-- Tab 1: Cached patterns (pick which to evaluate) -->
@@ -309,6 +310,49 @@
     </div>
   </div>
 
+  <!-- Tab 3: Playground -->
+  <div id="tab-playground" class="tab-content">
+    <div class="actions">
+      <select id="pg-pattern" onchange="onPlaygroundPatternChange()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:0.85rem;min-width:250px;">
+        <option value="">Select a pattern...</option>
+      </select>
+      <button id="btn-pg-run" onclick="runPlayground()" disabled>Run Extraction</button>
+      <button class="btn-secondary" onclick="loadPrompt()">Reset Prompt</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
+      <!-- Prompt editor -->
+      <div>
+        <div class="section-title">System Prompt</div>
+        <textarea id="pg-prompt" style="width:100%;height:500px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-size:0.8rem;font-family:monospace;resize:vertical;"></textarea>
+      </div>
+
+      <!-- Response -->
+      <div>
+        <div class="section-title">
+          Response
+          <span id="pg-usage" style="float:right;font-size:0.7rem;color:var(--text-dim);text-transform:none;letter-spacing:0;"></span>
+        </div>
+        <div id="pg-response" style="width:100%;height:500px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-size:0.8rem;font-family:monospace;overflow:auto;white-space:pre-wrap;"></div>
+      </div>
+    </div>
+
+    <!-- Comparison: current cached vs new -->
+    <div id="pg-comparison" style="display:none;margin-top:24px;">
+      <div class="section-title">Comparison: Cached vs New</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:8px;">Cached extraction</div>
+          <div id="pg-cached-summary" style="background:var(--surface);border:1px solid var(--border);padding:12px;border-radius:6px;font-size:0.8rem;max-height:400px;overflow:auto;"></div>
+        </div>
+        <div>
+          <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:8px;">New extraction</div>
+          <div id="pg-new-summary" style="background:var(--surface);border:1px solid var(--border);padding:12px;border-radius:6px;font-size:0.8rem;max-height:400px;overflow:auto;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Detail panel -->
   <div class="detail-panel" id="detail-panel">
     <div class="detail-header">
@@ -351,6 +395,10 @@
       document.querySelector(`.tab[onclick*="${tab}"]`).classList.add('active');
       closeDetail();
       if (tab === 'results') loadResults();
+      if (tab === 'playground') {
+        populatePlaygroundPatterns();
+        if (!document.getElementById('pg-prompt').value) loadPrompt();
+      }
     }
 
     // --- Helpers ---
@@ -683,6 +731,145 @@
 
     function escapeHtml(str) {
       return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // --- Playground ---
+
+    let playgroundCachedJson = null;
+
+    async function loadPrompt() {
+      try {
+        const result = await callEdgeFunction({ action: 'get_prompt' });
+        document.getElementById('pg-prompt').value = result.prompt || '';
+      } catch (e) {
+        console.error('Failed to load prompt:', e);
+      }
+    }
+
+    function populatePlaygroundPatterns() {
+      const select = document.getElementById('pg-pattern');
+      // Keep the first option
+      select.innerHTML = '<option value="">Select a pattern...</option>';
+      for (const p of cachedPatterns) {
+        const opt = document.createElement('option');
+        opt.value = p.pdf_hash;
+        opt.textContent = `${p.title} (${p.sizes.length} sizes)`;
+        select.appendChild(opt);
+      }
+    }
+
+    async function onPlaygroundPatternChange() {
+      const hash = document.getElementById('pg-pattern').value;
+      document.getElementById('btn-pg-run').disabled = !hash;
+      document.getElementById('pg-response').textContent = '';
+      document.getElementById('pg-usage').textContent = '';
+      document.getElementById('pg-comparison').style.display = 'none';
+      playgroundCachedJson = null;
+
+      if (hash) {
+        // Load cached detail for comparison
+        try {
+          const detail = await callEdgeFunction({ action: 'detail', pdf_hash: hash });
+          playgroundCachedJson = detail.structured_json;
+        } catch (_) {}
+      }
+    }
+
+    async function runPlayground() {
+      const hash = document.getElementById('pg-pattern').value;
+      const prompt = document.getElementById('pg-prompt').value;
+      if (!hash || !prompt) return;
+
+      const btn = document.getElementById('btn-pg-run');
+      const responseDiv = document.getElementById('pg-response');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      responseDiv.textContent = 'Waiting for Gemini response...';
+      responseDiv.style.color = 'var(--text-dim)';
+
+      try {
+        const result = await callEdgeFunction({
+          action: 'playground',
+          pdf_hash: hash,
+          prompt: prompt,
+        });
+
+        responseDiv.style.color = 'var(--text)';
+
+        if (result.parsed_json) {
+          responseDiv.textContent = JSON.stringify(result.parsed_json, null, 2);
+          showComparison(playgroundCachedJson, result.parsed_json);
+        } else {
+          responseDiv.textContent = result.raw_response || 'No response';
+        }
+
+        if (result.usage) {
+          const u = result.usage;
+          document.getElementById('pg-usage').textContent =
+            `${u.promptTokenCount || 0} in / ${u.candidatesTokenCount || 0} out / ${u.totalTokenCount || 0} total tokens`;
+        }
+      } catch (e) {
+        responseDiv.style.color = 'var(--red)';
+        responseDiv.textContent = `Error: ${e.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Extraction';
+      }
+    }
+
+    function showComparison(cached, newJson) {
+      if (!cached || !newJson) {
+        document.getElementById('pg-comparison').style.display = 'none';
+        return;
+      }
+
+      document.getElementById('pg-comparison').style.display = 'block';
+      document.getElementById('pg-cached-summary').innerHTML = renderJsonSummary(cached);
+      document.getElementById('pg-new-summary').innerHTML = renderJsonSummary(newJson);
+    }
+
+    function renderJsonSummary(json) {
+      const sizes = json.sizes || [];
+      const yarns = json.yarns || [];
+      const sections = json.sections || [];
+      const measurements = json.measurements || [];
+
+      let html = `<div style="margin-bottom:8px;"><strong>Title:</strong> ${escapeHtml(json.title || '?')}</div>`;
+      html += `<div style="margin-bottom:8px;"><strong>Sizes (${sizes.length}):</strong> ${sizes.join(', ') || 'none'}</div>`;
+      html += `<div style="margin-bottom:8px;"><strong>Language:</strong> ${json.source_language || '?'}</div>`;
+
+      // Gauge
+      if (json.gauge) {
+        const g = json.gauge;
+        html += `<div style="margin-bottom:8px;"><strong>Gauge:</strong> ${g.stitches_per_10cm || '?'} sts / ${g.rows_per_10cm || '?'} rows per 10cm, ${g.needle_size || '?'}</div>`;
+      }
+
+      // Yarns
+      html += `<div style="margin-bottom:4px;"><strong>Yarns (${yarns.length}):</strong></div>`;
+      for (const y of yarns) {
+        const name = [y.brand, y.line_name].filter(Boolean).join(' ') || '?';
+        const color = [y.color_code, y.color_name].filter(Boolean).join(' ') || '';
+        const amounts = (y.amounts_per_size || []).join(', ');
+        html += `<div style="padding-left:12px;font-size:0.75rem;color:var(--text-dim);">- ${escapeHtml(name)}${color ? ' (' + escapeHtml(color) + ')' : ''}${amounts ? ': ' + amounts : ''}</div>`;
+      }
+
+      // Measurements
+      html += `<div style="margin:8px 0 4px;"><strong>Measurements (${measurements.length}):</strong></div>`;
+      for (const m of measurements) {
+        const vals = (m.values_per_size || []).join(', ');
+        html += `<div style="padding-left:12px;font-size:0.75rem;color:var(--text-dim);">- ${escapeHtml(m.label || '?')}: ${vals} ${m.unit || ''}</div>`;
+      }
+
+      // Sections
+      html += `<div style="margin:8px 0 4px;"><strong>Sections (${sections.length}):</strong></div>`;
+      for (const s of sections) {
+        const tps = s.texts_per_size || [];
+        const hasPerSize = tps.length > 0;
+        const textLen = hasPerSize ? tps.map(t => t.length) : [s.text?.length || 0];
+        html += `<div style="padding-left:12px;font-size:0.75rem;color:var(--text-dim);">- ${escapeHtml(s.title || '?')} (${hasPerSize ? tps.length + ' sizes, ' : ''}${textLen[0]} chars)</div>`;
+      }
+
+      return html;
     }
 
     // --- Init ---
