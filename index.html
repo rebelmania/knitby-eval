@@ -268,11 +268,12 @@
             <th>Pattern</th>
             <th>Sizes</th>
             <th>Model</th>
+            <th>Cached</th>
             <th>Status</th>
           </tr>
         </thead>
         <tbody id="cached-body">
-          <tr><td colspan="5" class="loading">Loading...</td></tr>
+          <tr><td colspan="6" class="loading">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -377,6 +378,12 @@
       return `${days}d ago`;
     }
 
+    function formatDate(dateStr) {
+      if (!dateStr) return '-';
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('sv-SE') + ' ' + d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+    }
+
     // --- Cached patterns tab ---
 
     async function callEdgeFunction(payload) {
@@ -400,7 +407,7 @@
       const config = getConfig();
       if (!config?.fnUrl) {
         document.getElementById('cached-body').innerHTML =
-          '<tr><td colspan="5" class="empty">Set the Edge Function URL in config first.</td></tr>';
+          '<tr><td colspan="6" class="empty">Set the Edge Function URL in config first.</td></tr>';
         return;
       }
       try {
@@ -411,14 +418,14 @@
       } catch (e) {
         console.error('Load cached failed:', e);
         document.getElementById('cached-body').innerHTML =
-          `<tr><td colspan="5" class="empty">Failed to load: ${e.message}</td></tr>`;
+          `<tr><td colspan="6" class="empty">Failed to load: ${e.message}</td></tr>`;
       }
     }
 
     function renderCachedTable() {
       const tbody = document.getElementById('cached-body');
       if (!cachedPatterns.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty">No cached patterns with raw text found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No cached patterns with raw text found.</td></tr>';
         return;
       }
 
@@ -432,6 +439,7 @@
           <td style="cursor:pointer" onclick="showPatternDetail('${p.pdf_hash}')">${p.title}</td>
           <td>${p.sizes.length || '-'}</td>
           <td style="color:var(--text-dim)">${p.model_version || '-'}</td>
+          <td style="color:var(--text-dim)">${formatDate(p.cached_at)}</td>
           <td>${statusHtml}</td>
         </tr>`;
       }).join('');
@@ -572,7 +580,7 @@
           <td class="score-cell" style="color:${scoreColor(r.faithfulness_score)}">${formatScore(r.faithfulness_score)}</td>
           <td class="score-cell" style="color:${scoreColor(r.size_resolution_score)}">${formatScore(r.size_resolution_score)}</td>
           <td class="score-cell" style="color:${scoreColor(r.overall_score)}">${formatScore(r.overall_score)}</td>
-          <td style="color:var(--text-dim)">${timeAgo(r.evaluated_at)}</td>
+          <td style="color:var(--text-dim)" title="${r.evaluated_at || ''}">${formatDate(r.evaluated_at)}</td>
         </tr>
       `).join('');
     }
@@ -682,7 +690,7 @@
       if (!config) {
         document.getElementById('config-banner').style.display = 'block';
         document.getElementById('cached-body').innerHTML =
-          '<tr><td colspan="5" class="empty">Configure Supabase connection above to get started.</td></tr>';
+          '<tr><td colspan="6" class="empty">Configure Supabase connection above to get started.</td></tr>';
         return;
       }
 
