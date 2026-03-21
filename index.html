@@ -375,42 +375,24 @@
     // --- Cached patterns tab ---
 
     async function loadCached() {
-      if (!supabaseClient) return;
+      const config = getConfig();
+      if (!config?.fnUrl) {
+        document.getElementById('cached-body').innerHTML =
+          '<tr><td colspan="5" class="empty">Set the Edge Function URL in config first.</td></tr>';
+        return;
+      }
       try {
-        // Load cached patterns
-        const { data: cached, error: cacheErr } = await supabaseClient
-          .from('pdf_pattern_cache')
-          .select('pdf_hash, raw_text, structured_json, model_version, created_at')
-          .not('raw_text', 'is', null)
-          .not('structured_json', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(100);
-
-        if (cacheErr) throw cacheErr;
-
-        // Load existing eval hashes for status
-        const { data: evals } = await supabaseClient
-          .from('eval_results')
-          .select('pdf_hash, evaluated_at')
-          .order('evaluated_at', { ascending: false });
-
-        const evalMap = {};
-        for (const e of (evals || [])) {
-          if (!evalMap[e.pdf_hash]) evalMap[e.pdf_hash] = e.evaluated_at;
-        }
-
-        cachedPatterns = (cached || []).map(c => {
-          const sj = c.structured_json || {};
-          return {
-            pdf_hash: c.pdf_hash,
-            title: sj.title || c.pdf_hash?.substring(0, 12),
-            sizes: sj.sizes || [],
-            model_version: c.model_version,
-            created_at: c.created_at,
-            evaluated_at: evalMap[c.pdf_hash] || null,
-          };
+        const res = await fetch(config.fnUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.key}`,
+          },
+          body: JSON.stringify({ action: 'list' }),
         });
-
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        const result = await res.json();
+        cachedPatterns = result.patterns || [];
         selectedHashes.clear();
         renderCachedTable();
       } catch (e) {
