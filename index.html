@@ -240,6 +240,9 @@
     <label>Edge Function URL (for triggering evals)
       <input id="cfg-fn-url" type="text" placeholder="https://xxx.supabase.co/functions/v1/run-eval">
     </label>
+    <label>Dashboard Password
+      <input id="cfg-password" type="password" placeholder="Password for edge function auth">
+    </label>
     <button onclick="saveConfig()" style="margin-top:12px;">Save & Load</button>
   </div>
 
@@ -330,8 +333,10 @@
       const url = document.getElementById('cfg-url').value.trim();
       const key = document.getElementById('cfg-key').value.trim();
       const fnUrl = document.getElementById('cfg-fn-url').value.trim();
+      const password = document.getElementById('cfg-password').value;
       if (!url || !key) return alert('URL and Key are required');
-      localStorage.setItem('knitby-eval-config', JSON.stringify({ url, key, fnUrl }));
+      if (!password) return alert('Password is required');
+      localStorage.setItem('knitby-eval-config', JSON.stringify({ url, key, fnUrl, password }));
       location.reload();
     }
 
@@ -374,6 +379,23 @@
 
     // --- Cached patterns tab ---
 
+    async function callEdgeFunction(payload) {
+      const config = getConfig();
+      if (!config?.fnUrl || !config?.password) throw new Error('Config not set');
+      const res = await fetch(config.fnUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, password: config.password }),
+      });
+      if (res.status === 401) {
+        localStorage.removeItem('knitby-eval-config');
+        location.reload();
+        throw new Error('Invalid password — config cleared');
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      return res.json();
+    }
+
     async function loadCached() {
       const config = getConfig();
       if (!config?.fnUrl) {
@@ -382,16 +404,7 @@
         return;
       }
       try {
-        const res = await fetch(config.fnUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.key}`,
-          },
-          body: JSON.stringify({ action: 'list' }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-        const result = await res.json();
+        const result = await callEdgeFunction({ action: 'list' });
         cachedPatterns = result.patterns || [];
         selectedHashes.clear();
         renderCachedTable();
@@ -416,7 +429,7 @@
           : `<span class="status-badge status-pending">Not evaluated</span>`;
         return `<tr>
           <td class="cb-col"><input type="checkbox" ${checked} onchange="toggleSelect('${p.pdf_hash}', this)"></td>
-          <td>${p.title}</td>
+          <td style="cursor:pointer" onclick="showPatternDetail('${p.pdf_hash}')">${p.title}</td>
           <td>${p.sizes.length || '-'}</td>
           <td style="color:var(--text-dim)">${p.model_version || '-'}</td>
           <td>${statusHtml}</td>
@@ -472,19 +485,7 @@
       for (const hash of hashes) {
         try {
           btn.textContent = `Evaluating ${++completed}/${hashes.length}...`;
-          const res = await fetch(config.fnUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${config.key}`,
-            },
-            body: JSON.stringify({ pdf_hash: hash, limit: 1 }),
-          });
-          if (!res.ok) {
-            const text = await res.text();
-            console.error(`Eval failed for ${hash}: ${text}`);
-            failed++;
-          }
+          await callEdgeFunction({ pdf_hash: hash, limit: 1 });
         } catch (e) {
           console.error(`Eval failed for ${hash}:`, e);
           failed++;
@@ -613,6 +614,65 @@
 
     function closeDetail() {
       document.getElementById('detail-panel').classList.remove('open');
+    }
+
+    async function showPatternDetail(hash) {
+      const panel = document.getElementById('detail-panel');
+      document.getElementById('detail-title').textContent = 'Loading...';
+      document.getElementById('detail-content').innerHTML = '';
+      panel.classList.add('open');
+
+      try {
+        const result = await callEdgeFunction({ action: 'detail', pdf_hash: hash });
+
+        const title = result.structured_json?.title || hash.substring(0, 12);
+        document.getElementById('detail-title').textContent = title;
+
+        const sections = result.structured_json?.sections || [];
+        const sizes = result.structured_json?.sizes || [];
+
+        let html = `<div style="margin-bottom:16px;">
+          <strong>Sizes:</strong> ${sizes.join(', ') || 'none'}
+          <strong style="margin-left:16px;">Model:</strong> ${result.model_version || '-'}
+        </div>`;
+
+        // Sections with per-size text
+        html += `<div class="section-title">Sections (${sections.length})</div>`;
+        for (const s of sections) {
+          html += `<div class="dimension">
+            <div class="dimension-name" style="margin-bottom:8px;">${s.title || 'Untitled'}</div>`;
+          if (s.texts_per_size && s.texts_per_size.length > 0) {
+            for (let i = 0; i < s.texts_per_size.length; i++) {
+              const sizeLabel = sizes[i] || `Size ${i+1}`;
+              html += `<details style="margin-bottom:4px;">
+                <summary style="cursor:pointer;color:var(--accent);font-size:0.8rem;">${sizeLabel}</summary>
+                <pre style="white-space:pre-wrap;font-size:0.75rem;color:var(--text-dim);margin:4px 0 8px;padding:8px;background:var(--bg);border-radius:4px;max-height:300px;overflow:auto;">${escapeHtml(s.texts_per_size[i])}</pre>
+              </details>`;
+            }
+          } else if (s.text) {
+            html += `<pre style="white-space:pre-wrap;font-size:0.75rem;color:var(--text-dim);padding:8px;background:var(--bg);border-radius:4px;">${escapeHtml(s.text)}</pre>`;
+          }
+          html += `</div>`;
+        }
+
+        // Raw source text
+        if (result.raw_text) {
+          html += `<div class="section-title">Source Text (raw PDF)</div>
+          <details>
+            <summary style="cursor:pointer;color:var(--accent);font-size:0.85rem;">Show/hide source text (${result.raw_text.length} chars)</summary>
+            <pre style="white-space:pre-wrap;font-size:0.75rem;color:var(--text-dim);margin-top:8px;padding:12px;background:var(--surface2);border-radius:6px;max-height:500px;overflow:auto;">${escapeHtml(result.raw_text)}</pre>
+          </details>`;
+        }
+
+        document.getElementById('detail-content').innerHTML = html;
+      } catch (e) {
+        document.getElementById('detail-content').innerHTML =
+          `<p style="color:var(--red)">Failed to load: ${e.message}</p>`;
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
     // --- Init ---
