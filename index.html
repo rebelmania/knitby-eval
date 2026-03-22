@@ -449,12 +449,21 @@
           <div id="bbox-page-grid" class="bbox-page-grid"></div>
         </div>
 
-        <div class="section-title">Prompt</div>
-        <textarea id="bbox-prompt" style="width:100%;height:400px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-size:0.8rem;font-family:monospace;resize:vertical;"></textarea>
+        <!-- Step prompts with toggle -->
+        <div style="display:flex;gap:0;margin-top:16px;border-bottom:2px solid var(--border);">
+          <button class="tab active" id="bbox-step-tab-rotation" onclick="switchBboxStep('rotation')" style="font-size:0.75rem;padding:6px 14px;">Step 1: Rotation</button>
+          <button class="tab" id="bbox-step-tab-bbox" onclick="switchBboxStep('bbox-step')" style="font-size:0.75rem;padding:6px 14px;">Step 2: BBox Detection</button>
+        </div>
+        <div id="bbox-step-rotation" style="margin-top:8px;">
+          <textarea id="bbox-rotation-prompt" style="width:100%;height:200px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-size:0.8rem;font-family:monospace;resize:vertical;"></textarea>
+        </div>
+        <div id="bbox-step-bbox-step" style="display:none;margin-top:8px;">
+          <textarea id="bbox-detection-prompt" style="width:100%;height:300px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-size:0.8rem;font-family:monospace;resize:vertical;"></textarea>
+        </div>
 
         <div class="actions" style="margin-top:12px;">
           <button id="btn-bbox-run" onclick="runBboxAnalysis()" disabled>Analyze Pages</button>
-          <button class="btn-secondary" onclick="resetBboxPrompt()">Reset Prompt</button>
+          <button class="btn-secondary" onclick="resetBboxPrompts()">Reset Prompts</button>
           <span id="bbox-status" style="color:var(--text-dim);font-size:0.85rem;"></span>
         </div>
       </div>
@@ -536,7 +545,7 @@
         if (!document.getElementById('pg-prompt').value) loadPrompt();
       }
       if (tab === 'bbox') {
-        if (!document.getElementById('bbox-prompt').value) resetBboxPrompt();
+        if (!document.getElementById('bbox-rotation-prompt').value) resetBboxPrompts();
       }
     }
 
@@ -1020,17 +1029,52 @@
     let bboxPageCanvases = {}; // pageNum -> { canvas, pngBytes }
     const BBOX_COLORS = ['#7c6bf0', '#4caf50', '#ff9800', '#f44336', '#03a9f4', '#e91e63', '#cddc39', '#00bcd4'];
 
-    const DEFAULT_BBOX_PROMPT = `You are analyzing pages from a knitting pattern PDF.
+    const DEFAULT_ROTATION_PROMPT = `You are analyzing pages from a knitting pattern PDF to determine if they need rotation.
+
+For each page image, determine if the content is upright or rotated. Think step by step:
+
+1. Find any readable text on the page (titles, headings, instructions, page numbers, row labels)
+2. Determine which direction the text reads:
+   - If text reads left-to-right with baselines at the BOTTOM of each line = UPRIGHT (0)
+   - If text reads bottom-to-top (baselines on the LEFT side of lines) = needs 90 clockwise
+   - If text reads right-to-left with baselines at the TOP = UPSIDE DOWN, needs 180
+   - If text reads top-to-bottom (baselines on the RIGHT side of lines) = needs 270 clockwise
+3. Cross-check with page numbers: they are typically at the top or bottom of an upright page
+4. Cross-check with chart grids: row numbers typically go along the right or left edge when upright
+
+Return ONLY a JSON object:
+{
+  "pages": {
+    "1": {
+      "text_direction": "left-to-right, baselines at bottom",
+      "reasoning": "Title text reads normally left to right, page number at bottom right",
+      "rotation": 0
+    },
+    "3": {
+      "text_direction": "bottom-to-top, baselines on left",
+      "reasoning": "Chart labels read from bottom to top, row numbers along what would be the top if rotated",
+      "rotation": 90
+    }
+  }
+}
+
+Rules:
+- "rotation": degrees to rotate the page CLOCKWISE to make it upright. Only 0, 90, 180, or 270.
+- "text_direction": describe how text currently flows on the page
+- "reasoning": brief explanation of what anchors you used to determine rotation
+- Include ALL pages that were sent as images
+- When in doubt, prefer 0 (no rotation). Only suggest rotation if you are confident.`;
+
+    const DEFAULT_BBOX_PROMPT = `You are analyzing pages from a knitting pattern PDF. The pages have already been rotated to be upright -- do NOT suggest any rotation.
 
 For EVERY page image, determine:
 1. Whether it contains a knitting chart (a grid/diagram with symbols, NOT just text instructions)
 2. How many distinct charts are on the page
 3. Which size(s) the charts belong to, if any sizes are indicated
 4. Whether the page has a pattern photo/image (a photograph of the finished knitted garment, NOT a chart or diagram)
-5. For each chart found, provide a bounding box in Gemini's native 0-1000 coordinate system
-6. Whether the page appears rotated (text/content sideways or upside down)
+5. For each chart found, provide a bounding box in Gemini\'s native 0-1000 coordinate system
 
-Also, identify the pattern name/title. Look for it on the first page \u2014 it is often in a large, decorative, or stylized font.
+Also, identify the pattern name/title. Look for it on the first page -- it is often in a large, decorative, or stylized font.
 
 Also, identify ALL garment sizes offered by the pattern. Look for size listings in any format:
 - Standard labels: XS, S, M, L, XL, 2XL, etc.
@@ -1038,7 +1082,7 @@ Also, identify ALL garment sizes offered by the pattern. Look for size listings 
 - Named ranges: "Small (Medium, Large)"
 - European: EU 36, EU 38, etc.
 - Compound: "S-M", "L-XL", etc.
-- One-size / One Size / OS \u2014 patterns with no size variation (return ["One Size"])
+- One-size / One Size / OS -- patterns with no size variation (return ["One Size"])
 
 BOUNDING BOX INSTRUCTIONS:
 - Return bounding boxes as an array with labels. Never return masks. If a chart is present multiple times (e.g. for different sizes), give each a unique label according to its distinct characteristics.
@@ -1050,14 +1094,6 @@ BOUNDING BOX INSTRUCTIONS:
 - Include "row_count": the number of rows in the chart grid. Count the actual grid rows visible in the chart (not including labels or margins). If you cannot determine the count, omit this field.
 - Include "col_count_min" and "col_count_max": the minimum and maximum number of columns (stitches) across all rows. For rectangular charts these are the same. For shaped charts (e.g. yoke decreases) the narrowest and widest row differ. If you cannot determine the count, omit these fields.
 
-ROTATION DETECTION:
-- For each page, detect if the content appears rotated. Check if text/titles/charts are sideways or upside down.
-- Return "suggested_rotation": the degrees (0, 90, 180, 270) to rotate the page clockwise so content reads normally.
-- 0 = content is already upright
-- 90 = content is rotated 90\u00b0 counter-clockwise (needs 90\u00b0 CW to fix)
-- 180 = content is upside down
-- 270 = content is rotated 90\u00b0 clockwise (needs 270\u00b0 CW to fix)
-
 Return ONLY a JSON object:
 {
   "pattern_name": "Name of the Pattern",
@@ -1065,13 +1101,11 @@ Return ONLY a JSON object:
   "pages": {
     "1": {
       "has_chart": false, "chart_count": 0, "sizes": [],
-      "has_photo": true, "charts": [],
-      "suggested_rotation": 0
+      "has_photo": true, "charts": []
     },
     "3": {
       "has_chart": true, "chart_count": 2, "sizes": ["S", "M"],
       "has_photo": false,
-      "suggested_rotation": 0,
       "charts": [
         {"label": "Chart A - Size S", "sizes": ["S"], "box_2d": [120, 50, 480, 950], "row_count": 24, "col_count_min": 48, "col_count_max": 48},
         {"label": "Chart A - Size M", "sizes": ["M"], "box_2d": [520, 50, 880, 950], "row_count": 28, "col_count_min": 36, "col_count_max": 52}
@@ -1083,17 +1117,24 @@ Return ONLY a JSON object:
 Rules:
 - "has_chart": true only if the page contains an actual knitting chart grid/diagram
 - "chart_count": number of distinct chart grids on the page (0 if no charts)
-- "sizes": array of size labels that the charts on this page belong to. IMPORTANT: Use the EXACT same labels as in "detected_sizes" \u2014 do NOT abbreviate or rephrase them. Use empty array [] if charts are general / apply to all sizes.
+- "sizes": array of size labels that the charts on this page belong to. IMPORTANT: Use the EXACT same labels as in "detected_sizes" -- do NOT abbreviate or rephrase them. Use empty array [] if charts are general / apply to all sizes.
 - "has_photo": true if page has a photograph of the finished knitted item
 - "charts": array of chart objects with "label" and "box_2d". Empty array if no charts.
   Each chart can optionally include "sizes": an array of size labels (from "detected_sizes") that this specific chart belongs to. Omit or use [] if the chart applies to all sizes.
 - "box_2d": [y_min, x_min, y_max, x_max] in 0-1000 scale. Must have exactly 4 values.
 - "chart_count" MUST equal the length of the "charts" array. If chart_count is 2, there must be exactly 2 entries in "charts".
-- "suggested_rotation": 0, 90, 180, or 270. The rotation needed to make content upright.
 - Include ALL pages that were sent as images.`;
 
-    function resetBboxPrompt() {
-      document.getElementById('bbox-prompt').value = DEFAULT_BBOX_PROMPT;
+    function switchBboxStep(step) {
+      document.getElementById('bbox-step-rotation').style.display = step === 'rotation' ? 'block' : 'none';
+      document.getElementById('bbox-step-bbox-step').style.display = step === 'bbox-step' ? 'block' : 'none';
+      document.getElementById('bbox-step-tab-rotation').classList.toggle('active', step === 'rotation');
+      document.getElementById('bbox-step-tab-bbox').classList.toggle('active', step === 'bbox-step');
+    }
+
+    function resetBboxPrompts() {
+      document.getElementById('bbox-rotation-prompt').value = DEFAULT_ROTATION_PROMPT;
+      document.getElementById('bbox-detection-prompt').value = DEFAULT_BBOX_PROMPT;
     }
 
     // Drag and drop
@@ -1208,6 +1249,39 @@ Rules:
       return { canvas, base64, width: canvas.width, height: canvas.height };
     }
 
+    async function rotateCanvasImage(canvas, rotation) {
+      if (rotation === 0) {
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const arrayBuf = await blob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuf);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        return { canvas, base64: btoa(binary), width: canvas.width, height: canvas.height };
+      }
+
+      const swapDims = (rotation === 90 || rotation === 270);
+      const newW = swapDims ? canvas.height : canvas.width;
+      const newH = swapDims ? canvas.width : canvas.height;
+
+      const rotCanvas = document.createElement('canvas');
+      rotCanvas.width = newW;
+      rotCanvas.height = newH;
+      const ctx = rotCanvas.getContext('2d');
+
+      ctx.save();
+      ctx.translate(newW / 2, newH / 2);
+      ctx.rotate((rotation * Math.PI) / 180);
+      ctx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
+      ctx.restore();
+
+      const blob = await new Promise(resolve => rotCanvas.toBlob(resolve, 'image/png'));
+      const arrayBuf = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return { canvas: rotCanvas, base64: btoa(binary), width: newW, height: newH };
+    }
+
     async function runBboxAnalysis() {
       const config = getConfig();
       if (!config?.fnUrl) {
@@ -1227,52 +1301,112 @@ Rules:
       jsonDiv.textContent = '';
 
       try {
-        // Render selected pages
         const sortedPages = [...bboxSelectedPages].sort((a, b) => a - b);
         const pageData = {};
-        const images = [];
+        const originalImages = [];
 
         for (const pageNum of sortedPages) {
           statusEl.textContent = `Rendering page ${pageNum}...`;
           const rendered = await renderPageAtHighRes(pageNum);
           pageData[pageNum] = rendered;
-          images.push({
+          originalImages.push({
             data: rendered.base64,
             mimeType: 'image/png',
           });
         }
 
-        const prompt = document.getElementById('bbox-prompt').value;
+        // ========== STEP 1: Rotation Detection ==========
+        const rotationPrompt = document.getElementById('bbox-rotation-prompt').value;
+        statusEl.textContent = 'Step 1/2: Detecting rotation...';
+        resultsDiv.innerHTML = '<p style="color:var(--text-dim);text-align:center;padding:40px 0;">Step 1/2: Detecting page rotation...</p>';
 
-        statusEl.textContent = 'Sending to Gemini via edge function...';
-        resultsDiv.innerHTML = '<p style="color:var(--text-dim);text-align:center;padding:40px 0;">Waiting for Gemini response...</p>';
-
-        const result = await callEdgeFunction({
+        const rotationResult = await callEdgeFunction({
           action: 'bbox_analyze',
-          images,
-          prompt,
+          images: originalImages,
+          prompt: rotationPrompt,
         });
 
-        if (result.error) throw new Error(result.error);
+        if (rotationResult.error) throw new Error('Rotation step: ' + rotationResult.error);
 
-        // Show usage
-        const usage = result.usage;
-        if (usage) {
-          document.getElementById('bbox-usage').textContent =
-            `${usage.promptTokenCount || 0} in / ${usage.candidatesTokenCount || 0} out / ${usage.totalTokenCount || 0} total tokens`;
+        const rotationParsed = rotationResult.parsed_json;
+        if (!rotationParsed?.pages) throw new Error('Rotation step: failed to parse JSON response');
+
+        // Build rotation map and apply rotations client-side
+        const rotationMap = {};
+        const rotatedPageData = {};
+        const rotatedImages = [];
+
+        statusEl.textContent = 'Applying rotations...';
+
+        for (const pageNum of sortedPages) {
+          const pageKey = String(pageNum);
+          const pageRotation = rotationParsed.pages[pageKey];
+          const degrees = pageRotation?.rotation || 0;
+          rotationMap[pageNum] = degrees;
+
+          const rotated = await rotateCanvasImage(pageData[pageNum].canvas, degrees);
+          rotatedPageData[pageNum] = rotated;
+          rotatedImages.push({
+            data: rotated.base64,
+            mimeType: 'image/png',
+          });
         }
 
-        const parsed = result.parsed_json;
+        // Rotation results summary
+        const rotSummary = sortedPages.map(p => {
+          const deg = rotationMap[p];
+          const info = rotationParsed.pages[String(p)];
+          let text = `<strong>Page ${p}:</strong> ${deg === 0 ? 'upright' : deg + '\u00b0 CW'}`;
+          if (info?.reasoning) text += ` <span style="color:var(--text-dim);">\u2014 ${escapeHtml(info.reasoning)}</span>`;
+          return text;
+        }).join('<br>');
+
+        // ========== STEP 2: BBox Detection (on rotated images) ==========
+        const bboxPrompt = document.getElementById('bbox-detection-prompt').value;
+        statusEl.textContent = 'Step 2/2: Detecting bounding boxes...';
+        resultsDiv.innerHTML = `<div style="margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:6px;">
+          <div style="font-size:0.75rem;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;">Step 1 \u2014 Rotation Detection</div>
+          <div style="font-size:0.8rem;">${rotSummary}</div>
+        </div>
+        <p style="color:var(--text-dim);text-align:center;padding:20px 0;">Step 2/2: Detecting bounding boxes...</p>`;
+
+        const bboxResult = await callEdgeFunction({
+          action: 'bbox_analyze',
+          images: rotatedImages,
+          prompt: bboxPrompt,
+        });
+
+        if (bboxResult.error) throw new Error('BBox step: ' + bboxResult.error);
+
+        // Show combined token usage
+        const rUsage = rotationResult.usage || {};
+        const bUsage = bboxResult.usage || {};
+        const totalIn = (rUsage.promptTokenCount || 0) + (bUsage.promptTokenCount || 0);
+        const totalOut = (rUsage.candidatesTokenCount || 0) + (bUsage.candidatesTokenCount || 0);
+        document.getElementById('bbox-usage').textContent =
+          `Rotation: ${rUsage.totalTokenCount || 0} | BBox: ${bUsage.totalTokenCount || 0} | Total: ${totalIn + totalOut} tokens`;
+
+        const parsed = bboxResult.parsed_json;
         if (!parsed) {
-          jsonDiv.textContent = result.raw_response || 'No response';
-          throw new Error('Failed to parse JSON response');
+          jsonDiv.textContent = bboxResult.raw_response || 'No response';
+          throw new Error('BBox step: failed to parse JSON response');
         }
 
-        jsonDiv.textContent = JSON.stringify(parsed, null, 2);
+        // Combined JSON output
+        jsonDiv.textContent = JSON.stringify({
+          step1_rotation: rotationParsed,
+          step2_bbox: parsed,
+        }, null, 2);
 
-        // Render results with bounding boxes
+        // Render results with bounding boxes on rotated images
         const pages = parsed.pages || parsed;
         resultsDiv.innerHTML = '';
+
+        // Rotation summary card
+        resultsDiv.innerHTML += `<div style="margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:6px;">
+          <div style="font-size:0.75rem;color:var(--text-dim);text-transform:uppercase;margin-bottom:6px;">Step 1 \u2014 Rotation Applied</div>
+          <div style="font-size:0.8rem;">${rotSummary}</div>
+        </div>`;
 
         if (parsed.pattern_name) {
           resultsDiv.innerHTML += `<div style="margin-bottom:12px;"><strong>Pattern:</strong> ${escapeHtml(parsed.pattern_name)}</div>`;
@@ -1284,60 +1418,42 @@ Rules:
         for (const pageNum of sortedPages) {
           const pageKey = String(pageNum);
           const pageInfo = pages[pageKey];
-          const rendered = pageData[pageNum];
+          const rendered = rotatedPageData[pageNum];
           if (!rendered || !pageInfo) continue;
 
           const container = document.createElement('div');
           container.className = 'bbox-result-container';
           container.style.maxWidth = '100%';
 
-          // Page header
           const header = document.createElement('div');
           header.style.cssText = 'margin-bottom:8px;font-size:0.85rem;';
           let headerText = `<strong>Page ${pageNum}</strong>`;
+          if (rotationMap[pageNum] !== 0) {
+            headerText += ` <span style="color:var(--yellow);">Rotated ${rotationMap[pageNum]}\u00b0</span>`;
+          }
           if (pageInfo.has_chart) headerText += ` \u2014 ${pageInfo.chart_count} chart(s)`;
           if (pageInfo.has_photo) headerText += ' \ud83d\udcf7';
-          if (pageInfo.suggested_rotation && pageInfo.suggested_rotation !== 0) {
-            headerText += ` <span style="color:var(--yellow);">Rotation: ${pageInfo.suggested_rotation}\u00b0</span>`;
-          }
           if (pageInfo.sizes?.length) headerText += ` \u2014 Sizes: ${pageInfo.sizes.join(', ')}`;
           header.innerHTML = headerText;
           container.appendChild(header);
 
-          // Image with overlays
+          // Image with overlays - already rotated, no rotation transform needed
           const imgWrap = document.createElement('div');
           imgWrap.style.cssText = 'position:relative;display:inline-block;';
 
-          // Clone canvas at display size, applying rotation if suggested
-          const rotation = pageInfo.suggested_rotation || 0;
-          const swapDims = (rotation === 90 || rotation === 270);
-          const srcW = rendered.width;
-          const srcH = rendered.height;
-          const rotW = swapDims ? srcH : srcW;
-          const rotH = swapDims ? srcW : srcH;
           const maxW = 500;
-          const ratio = Math.min(maxW / rotW, 1);
+          const ratio = Math.min(maxW / rendered.width, 1);
 
           const displayCanvas = document.createElement('canvas');
-          displayCanvas.width = rotW * ratio;
-          displayCanvas.height = rotH * ratio;
+          displayCanvas.width = rendered.width * ratio;
+          displayCanvas.height = rendered.height * ratio;
           const dCtx = displayCanvas.getContext('2d');
-
-          if (rotation !== 0) {
-            dCtx.save();
-            dCtx.translate(displayCanvas.width / 2, displayCanvas.height / 2);
-            dCtx.rotate((rotation * Math.PI) / 180);
-            dCtx.drawImage(rendered.canvas, -srcW * ratio / 2, -srcH * ratio / 2, srcW * ratio, srcH * ratio);
-            dCtx.restore();
-          } else {
-            dCtx.drawImage(rendered.canvas, 0, 0, displayCanvas.width, displayCanvas.height);
-          }
+          dCtx.drawImage(rendered.canvas, 0, 0, displayCanvas.width, displayCanvas.height);
           imgWrap.appendChild(displayCanvas);
 
-          // Draw dimming overlay + bounding boxes (matching knitby app style)
+          // Dimming overlay + bounding boxes
           const charts = pageInfo.charts || [];
           if (charts.length > 0) {
-            // Create SVG dimming overlay (darkens everything outside chart regions)
             const dimSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
             dimSvg.setAttribute('class', 'bbox-dim-overlay');
             dimSvg.setAttribute('viewBox', '0 0 1000 1000');
@@ -1347,14 +1463,12 @@ Rules:
             const mask = document.createElementNS('http://www.w3.org/2000/svg', 'mask');
             mask.setAttribute('id', `dim-mask-${pageNum}`);
 
-            // White background = visible (dimmed)
             const maskBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
             maskBg.setAttribute('width', '1000');
             maskBg.setAttribute('height', '1000');
             maskBg.setAttribute('fill', 'white');
             mask.appendChild(maskBg);
 
-            // Black cutouts = transparent (chart regions shown clearly)
             charts.forEach((chart) => {
               if (!chart.box_2d || chart.box_2d.length !== 4) return;
               const [yMin, xMin, yMax, xMax] = chart.box_2d;
@@ -1388,8 +1502,6 @@ Rules:
             const box = document.createElement('div');
             box.className = 'bbox-overlay';
             box.style.borderColor = color;
-            box.style.background = color.replace(')', ', 0.10)').replace('rgb(', 'rgba(').replace('#', '');
-            // Convert hex color to rgba for fill
             const r = parseInt(color.slice(1, 3), 16);
             const g = parseInt(color.slice(3, 5), 16);
             const b = parseInt(color.slice(5, 7), 16);
@@ -1421,7 +1533,7 @@ Rules:
           resultsDiv.appendChild(container);
         }
 
-        statusEl.textContent = 'Done';
+        statusEl.textContent = 'Done (2 steps)';
       } catch (e) {
         console.error('BBox analysis failed:', e);
         statusEl.textContent = `Error: ${e.message}`;
