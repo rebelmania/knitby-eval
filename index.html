@@ -576,9 +576,9 @@
         body: JSON.stringify({ ...payload, password: config.password }),
       });
       if (res.status === 401) {
-        localStorage.removeItem('knitby-eval-config');
-        location.reload();
-        throw new Error('Invalid password — config cleared');
+        alert('Invalid password. Check your Dashboard Password in the config.');
+        document.getElementById('config-banner').style.display = 'block';
+        throw new Error('Invalid password');
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       return res.json();
