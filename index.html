@@ -5,17 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Knitby Pattern Eval Dashboard</title>
   <script type="module">
-    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-    window.supabaseCreateClient = createClient;
-
     import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs';
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
     window.pdfjsLib = pdfjsLib;
     window.pdfjsReady = Promise.resolve(pdfjsLib);
-
-    // Signal that modules are loaded
-    window.modulesReady = true;
-    window.dispatchEvent(new Event('modules-ready'));
   </script>
   <style>
     :root {
@@ -485,7 +478,21 @@
   </div>
 
   <script>
-    let supabaseClient = null;
+    // Direct PostgREST fetch (no Supabase JS client needed — avoids CSP eval issues)
+    async function postgrestQuery(config, table, { select = '*', order, limit } = {}) {
+      const url = new URL(`${config.url}/rest/v1/${table}`);
+      url.searchParams.set('select', select);
+      if (order) url.searchParams.set('order', `${order.column}.${order.ascending ? 'asc' : 'desc'}`);
+      if (limit) url.searchParams.set('limit', limit);
+      const res = await fetch(url, {
+        headers: {
+          'apikey': config.key,
+          'Authorization': `Bearer ${config.key}`,
+        }
+      });
+      if (!res.ok) throw new Error(`PostgREST error: ${res.status} ${await res.text()}`);
+      return res.json();
+    }
     let cachedPatterns = [];
     let evalData = [];
     let selectedHashes = new Set();
@@ -689,15 +696,14 @@
     // --- Results tab ---
 
     async function loadResults() {
-      if (!supabaseClient) return;
+      const config = getConfig();
+      if (!config) return;
       try {
-        const { data, error } = await supabaseClient
-          .from('eval_results')
-          .select('*')
-          .order('evaluated_at', { ascending: false })
-          .limit(50);
-
-        if (error) throw error;
+        const data = await postgrestQuery(config, 'eval_results', {
+          select: '*',
+          order: { column: 'evaluated_at', ascending: false },
+          limit: 50
+        });
         evalData = data || [];
         renderSummary(evalData);
         renderResultsTable(evalData);
@@ -1349,7 +1355,7 @@ Rules:
 
     // --- Init ---
 
-    function startApp() {
+    (function init() {
       const config = getConfig();
       if (!config) {
         document.getElementById('config-banner').style.display = 'block';
@@ -1357,16 +1363,8 @@ Rules:
           '<tr><td colspan="7" class="empty">Configure Supabase connection above to get started.</td></tr>';
         return;
       }
-
-      supabaseClient = window.supabaseCreateClient(config.url, config.key);
       loadCached();
-    }
-
-    if (window.modulesReady) {
-      startApp();
-    } else {
-      window.addEventListener('modules-ready', startApp);
-    }
+    })();
   </script>
 </body>
 </html>
