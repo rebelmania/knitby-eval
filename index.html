@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Knitby Pattern Eval Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
+  <script>
+    // Load pdf.js as a global
+    window.pdfjsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs').then(m => {
+      window.pdfjsLib = m;
+      m.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+      return m;
+    });
+  </script>
   <style>
     :root {
       --bg: #0f0f0f;
@@ -222,6 +231,69 @@
       margin-top: 8px;
       color: var(--text-dim);
     }
+    /* BBox playground */
+    .bbox-upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 40px;
+      text-align: center;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .bbox-upload-zone:hover, .bbox-upload-zone.dragover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+    .bbox-page-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .bbox-page-thumb {
+      position: relative;
+      border: 2px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .bbox-page-thumb.selected { border-color: var(--accent); }
+    .bbox-page-thumb canvas { display: block; width: 120px; height: auto; }
+    .bbox-page-num {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      text-align: center;
+      font-size: 0.7rem;
+      padding: 2px;
+    }
+    .bbox-result-container {
+      position: relative;
+      display: inline-block;
+      margin: 8px;
+    }
+    .bbox-result-container canvas { display: block; max-width: 100%; height: auto; }
+    .bbox-overlay {
+      position: absolute;
+      border: 2px solid;
+      background: rgba(124, 107, 240, 0.1);
+      pointer-events: none;
+    }
+    .bbox-label {
+      position: absolute;
+      top: -20px;
+      left: 0;
+      font-size: 0.65rem;
+      font-weight: 600;
+      padding: 1px 4px;
+      border-radius: 2px;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -251,6 +323,7 @@
     <button class="tab active" onclick="switchTab('cached')">Cached Patterns</button>
     <button class="tab" onclick="switchTab('results')">Eval Results</button>
     <button class="tab" onclick="switchTab('playground')">Playground</button>
+    <button class="tab" onclick="switchTab('bbox')">BBox Playground</button>
   </div>
 
   <!-- Tab 1: Cached patterns (pick which to evaluate) -->
@@ -353,6 +426,52 @@
     </div>
   </div>
 
+  <!-- Tab 4: BBox Playground -->
+  <div id="tab-bbox" class="tab-content">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <!-- Left: PDF upload + page selection + prompt -->
+      <div>
+        <div class="section-title">Upload PDF</div>
+        <div id="bbox-upload" class="bbox-upload-zone" onclick="document.getElementById('bbox-file').click()">
+          Drop a PDF here or click to upload
+          <input type="file" id="bbox-file" accept=".pdf" style="display:none" onchange="handleBboxPdf(this.files[0])">
+        </div>
+
+        <div id="bbox-pages-section" style="display:none;">
+          <div class="section-title">Select Pages <span id="bbox-page-count" style="color:var(--text-dim);font-size:0.7rem;"></span></div>
+          <div class="actions" style="margin-bottom:8px;">
+            <button class="btn-secondary" onclick="bboxSelectAll()" style="font-size:0.75rem;padding:4px 10px;">Select All</button>
+            <button class="btn-secondary" onclick="bboxDeselectAll()" style="font-size:0.75rem;padding:4px 10px;">Deselect All</button>
+          </div>
+          <div id="bbox-page-grid" class="bbox-page-grid"></div>
+        </div>
+
+        <div class="section-title">Prompt</div>
+        <textarea id="bbox-prompt" style="width:100%;height:400px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:6px;font-size:0.8rem;font-family:monospace;resize:vertical;"></textarea>
+
+        <div class="actions" style="margin-top:12px;">
+          <button id="btn-bbox-run" onclick="runBboxAnalysis()" disabled>Analyze Pages</button>
+          <button class="btn-secondary" onclick="resetBboxPrompt()">Reset Prompt</button>
+          <span id="bbox-status" style="color:var(--text-dim);font-size:0.85rem;"></span>
+        </div>
+      </div>
+
+      <!-- Right: Results with bounding box overlays -->
+      <div>
+        <div class="section-title">
+          Results
+          <span id="bbox-usage" style="float:right;font-size:0.7rem;color:var(--text-dim);text-transform:none;letter-spacing:0;"></span>
+        </div>
+        <div id="bbox-results" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:16px;min-height:400px;overflow:auto;">
+          <p style="color:var(--text-dim);text-align:center;padding:40px 0;">Upload a PDF and select pages to analyze</p>
+        </div>
+
+        <div class="section-title">Raw JSON Response</div>
+        <div id="bbox-json" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:12px;max-height:400px;overflow:auto;font-size:0.8rem;font-family:monospace;white-space:pre-wrap;color:var(--text-dim);"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Detail panel -->
   <div class="detail-panel" id="detail-panel">
     <div class="detail-header">
@@ -398,6 +517,9 @@
       if (tab === 'playground') {
         populatePlaygroundPatterns();
         if (!document.getElementById('pg-prompt').value) loadPrompt();
+      }
+      if (tab === 'bbox') {
+        if (!document.getElementById('bbox-prompt').value) resetBboxPrompt();
       }
     }
 
@@ -870,6 +992,356 @@
       }
 
       return html;
+    }
+
+    // --- BBox Playground ---
+
+    let bboxPdfDoc = null;
+    let bboxSelectedPages = new Set();
+    let bboxPageCanvases = {}; // pageNum -> { canvas, pngBytes }
+    const BBOX_COLORS = ['#7c6bf0', '#4caf50', '#ff9800', '#f44336', '#03a9f4', '#e91e63', '#cddc39', '#00bcd4'];
+
+    const DEFAULT_BBOX_PROMPT = `You are analyzing pages from a knitting pattern PDF.
+
+For EVERY page image, determine:
+1. Whether it contains a knitting chart (a grid/diagram with symbols, NOT just text instructions)
+2. How many distinct charts are on the page
+3. Which size(s) the charts belong to, if any sizes are indicated
+4. Whether the page has a pattern photo/image (a photograph of the finished knitted garment, NOT a chart or diagram)
+5. For each chart found, provide a bounding box in Gemini's native 0-1000 coordinate system
+6. Whether the page appears rotated (text/content sideways or upside down)
+
+Also, identify the pattern name/title. Look for it on the first page \u2014 it is often in a large, decorative, or stylized font.
+
+Also, identify ALL garment sizes offered by the pattern. Look for size listings in any format:
+- Standard labels: XS, S, M, L, XL, 2XL, etc.
+- Numeric: 32, 34, 36, 38, etc.
+- Named ranges: "Small (Medium, Large)"
+- European: EU 36, EU 38, etc.
+- Compound: "S-M", "L-XL", etc.
+- One-size / One Size / OS \u2014 patterns with no size variation (return ["One Size"])
+
+BOUNDING BOX INSTRUCTIONS:
+- Return bounding boxes as an array with labels. Never return masks. If a chart is present multiple times (e.g. for different sizes), give each a unique label according to its distinct characteristics.
+- For each distinct chart on a page, provide a "box_2d" in [y_min, x_min, y_max, x_max] format
+- Coordinates are in 0-1000 scale (0 = top/left edge, 1000 = bottom/right edge)
+- The box should tightly enclose ONLY the chart grid area (the cells/symbols). Do NOT include row numbers, column numbers, chart titles, or legend/key labels in the bounding box
+- Only create separate bounding boxes for charts that are clearly distinct (different names, different stitch patterns, or separated by a title/heading). Do NOT split a single continuous chart into multiple boxes because of visual dividers, color changes, or section breaks within one grid.
+- Include a short "label" for each chart (e.g. "Chart A", "Body chart", "Sleeve")
+- Include "row_count": the number of rows in the chart grid. Count the actual grid rows visible in the chart (not including labels or margins). If you cannot determine the count, omit this field.
+- Include "col_count_min" and "col_count_max": the minimum and maximum number of columns (stitches) across all rows. For rectangular charts these are the same. For shaped charts (e.g. yoke decreases) the narrowest and widest row differ. If you cannot determine the count, omit these fields.
+
+ROTATION DETECTION:
+- For each page, detect if the content appears rotated. Check if text/titles/charts are sideways or upside down.
+- Return "suggested_rotation": the degrees (0, 90, 180, 270) to rotate the page clockwise so content reads normally.
+- 0 = content is already upright
+- 90 = content is rotated 90\u00b0 counter-clockwise (needs 90\u00b0 CW to fix)
+- 180 = content is upside down
+- 270 = content is rotated 90\u00b0 clockwise (needs 270\u00b0 CW to fix)
+
+Return ONLY a JSON object:
+{
+  "pattern_name": "Name of the Pattern",
+  "detected_sizes": ["XS", "S", "M", "L", "XL"],
+  "pages": {
+    "1": {
+      "has_chart": false, "chart_count": 0, "sizes": [],
+      "has_photo": true, "charts": [],
+      "suggested_rotation": 0
+    },
+    "3": {
+      "has_chart": true, "chart_count": 2, "sizes": ["S", "M"],
+      "has_photo": false,
+      "suggested_rotation": 0,
+      "charts": [
+        {"label": "Chart A - Size S", "sizes": ["S"], "box_2d": [120, 50, 480, 950], "row_count": 24, "col_count_min": 48, "col_count_max": 48},
+        {"label": "Chart A - Size M", "sizes": ["M"], "box_2d": [520, 50, 880, 950], "row_count": 28, "col_count_min": 36, "col_count_max": 52}
+      ]
+    }
+  }
+}
+
+Rules:
+- "has_chart": true only if the page contains an actual knitting chart grid/diagram
+- "chart_count": number of distinct chart grids on the page (0 if no charts)
+- "sizes": array of size labels that the charts on this page belong to. IMPORTANT: Use the EXACT same labels as in "detected_sizes" \u2014 do NOT abbreviate or rephrase them. Use empty array [] if charts are general / apply to all sizes.
+- "has_photo": true if page has a photograph of the finished knitted item
+- "charts": array of chart objects with "label" and "box_2d". Empty array if no charts.
+  Each chart can optionally include "sizes": an array of size labels (from "detected_sizes") that this specific chart belongs to. Omit or use [] if the chart applies to all sizes.
+- "box_2d": [y_min, x_min, y_max, x_max] in 0-1000 scale. Must have exactly 4 values.
+- "chart_count" MUST equal the length of the "charts" array. If chart_count is 2, there must be exactly 2 entries in "charts".
+- "suggested_rotation": 0, 90, 180, or 270. The rotation needed to make content upright.
+- Include ALL pages that were sent as images.`;
+
+    function resetBboxPrompt() {
+      document.getElementById('bbox-prompt').value = DEFAULT_BBOX_PROMPT;
+    }
+
+    // Drag and drop
+    document.addEventListener('DOMContentLoaded', () => {
+      const zone = document.getElementById('bbox-upload');
+      if (!zone) return;
+      zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+      zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+      zone.addEventListener('drop', e => {
+        e.preventDefault();
+        zone.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (file && file.type === 'application/pdf') handleBboxPdf(file);
+      });
+    });
+
+    async function handleBboxPdf(file) {
+      if (!file) return;
+      await window.pdfjsReady;
+
+      document.getElementById('bbox-upload').innerHTML = `<span style="color:var(--accent);">${escapeHtml(file.name)}</span><br><span style="font-size:0.75rem;">Click or drop to replace</span>`;
+      document.getElementById('bbox-upload').onclick = () => document.getElementById('bbox-file').click();
+
+      const arrayBuf = await file.arrayBuffer();
+      bboxPdfDoc = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
+      bboxSelectedPages.clear();
+      bboxPageCanvases = {};
+
+      const grid = document.getElementById('bbox-page-grid');
+      grid.innerHTML = '';
+      document.getElementById('bbox-page-count').textContent = `(${bboxPdfDoc.numPages} pages)`;
+
+      for (let i = 1; i <= bboxPdfDoc.numPages; i++) {
+        const page = await bboxPdfDoc.getPage(i);
+        const viewport = page.getViewport({ scale: 0.3 });
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'bbox-page-thumb';
+        wrapper.dataset.page = i;
+        wrapper.onclick = () => toggleBboxPage(i, wrapper);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        const label = document.createElement('div');
+        label.className = 'bbox-page-num';
+        label.textContent = `Page ${i}`;
+
+        wrapper.appendChild(canvas);
+        wrapper.appendChild(label);
+        grid.appendChild(wrapper);
+      }
+
+      document.getElementById('bbox-pages-section').style.display = 'block';
+      updateBboxRunButton();
+    }
+
+    function toggleBboxPage(num, el) {
+      if (bboxSelectedPages.has(num)) {
+        bboxSelectedPages.delete(num);
+        el.classList.remove('selected');
+      } else {
+        bboxSelectedPages.add(num);
+        el.classList.add('selected');
+      }
+      updateBboxRunButton();
+    }
+
+    function bboxSelectAll() {
+      if (!bboxPdfDoc) return;
+      for (let i = 1; i <= bboxPdfDoc.numPages; i++) bboxSelectedPages.add(i);
+      document.querySelectorAll('.bbox-page-thumb').forEach(el => el.classList.add('selected'));
+      updateBboxRunButton();
+    }
+
+    function bboxDeselectAll() {
+      bboxSelectedPages.clear();
+      document.querySelectorAll('.bbox-page-thumb').forEach(el => el.classList.remove('selected'));
+      updateBboxRunButton();
+    }
+
+    function updateBboxRunButton() {
+      const btn = document.getElementById('btn-bbox-run');
+      btn.disabled = bboxSelectedPages.size === 0;
+      btn.textContent = bboxSelectedPages.size > 0
+        ? `Analyze ${bboxSelectedPages.size} Page${bboxSelectedPages.size > 1 ? 's' : ''}`
+        : 'Analyze Pages';
+    }
+
+    async function renderPageAtHighRes(pageNum) {
+      const page = await bboxPdfDoc.getPage(pageNum);
+      // Render at 150 DPI equivalent (matching kPreviewScale)
+      const scale = 150 / 72;
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      // Get PNG bytes
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      const arrayBuf = await blob.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+
+      return { canvas, base64, width: canvas.width, height: canvas.height };
+    }
+
+    async function runBboxAnalysis() {
+      const config = getConfig();
+      if (!config?.fnUrl) {
+        alert('Set Edge Function URL in config first');
+        return;
+      }
+      if (!bboxPdfDoc || bboxSelectedPages.size === 0) return;
+
+      const btn = document.getElementById('btn-bbox-run');
+      const statusEl = document.getElementById('bbox-status');
+      const resultsDiv = document.getElementById('bbox-results');
+      const jsonDiv = document.getElementById('bbox-json');
+
+      btn.disabled = true;
+      statusEl.textContent = 'Rendering pages...';
+      resultsDiv.innerHTML = '<p style="color:var(--text-dim);text-align:center;padding:40px 0;">Rendering pages...</p>';
+      jsonDiv.textContent = '';
+
+      try {
+        // Render selected pages
+        const sortedPages = [...bboxSelectedPages].sort((a, b) => a - b);
+        const pageData = {};
+        const images = [];
+
+        for (const pageNum of sortedPages) {
+          statusEl.textContent = `Rendering page ${pageNum}...`;
+          const rendered = await renderPageAtHighRes(pageNum);
+          pageData[pageNum] = rendered;
+          images.push({
+            data: rendered.base64,
+            mimeType: 'image/png',
+          });
+        }
+
+        const prompt = document.getElementById('bbox-prompt').value;
+
+        statusEl.textContent = 'Sending to Gemini via edge function...';
+        resultsDiv.innerHTML = '<p style="color:var(--text-dim);text-align:center;padding:40px 0;">Waiting for Gemini response...</p>';
+
+        const result = await callEdgeFunction({
+          action: 'bbox_analyze',
+          images,
+          prompt,
+        });
+
+        if (result.error) throw new Error(result.error);
+
+        // Show usage
+        const usage = result.usage;
+        if (usage) {
+          document.getElementById('bbox-usage').textContent =
+            `${usage.promptTokenCount || 0} in / ${usage.candidatesTokenCount || 0} out / ${usage.totalTokenCount || 0} total tokens`;
+        }
+
+        const parsed = result.parsed_json;
+        if (!parsed) {
+          jsonDiv.textContent = result.raw_response || 'No response';
+          throw new Error('Failed to parse JSON response');
+        }
+
+        jsonDiv.textContent = JSON.stringify(parsed, null, 2);
+
+        // Render results with bounding boxes
+        const pages = parsed.pages || parsed;
+        resultsDiv.innerHTML = '';
+
+        if (parsed.pattern_name) {
+          resultsDiv.innerHTML += `<div style="margin-bottom:12px;"><strong>Pattern:</strong> ${escapeHtml(parsed.pattern_name)}</div>`;
+        }
+        if (parsed.detected_sizes?.length) {
+          resultsDiv.innerHTML += `<div style="margin-bottom:16px;"><strong>Sizes:</strong> ${parsed.detected_sizes.join(', ')}</div>`;
+        }
+
+        for (const pageNum of sortedPages) {
+          const pageKey = String(pageNum);
+          const pageInfo = pages[pageKey];
+          const rendered = pageData[pageNum];
+          if (!rendered || !pageInfo) continue;
+
+          const container = document.createElement('div');
+          container.className = 'bbox-result-container';
+          container.style.maxWidth = '100%';
+
+          // Page header
+          const header = document.createElement('div');
+          header.style.cssText = 'margin-bottom:8px;font-size:0.85rem;';
+          let headerText = `<strong>Page ${pageNum}</strong>`;
+          if (pageInfo.has_chart) headerText += ` \u2014 ${pageInfo.chart_count} chart(s)`;
+          if (pageInfo.has_photo) headerText += ' \ud83d\udcf7';
+          if (pageInfo.suggested_rotation && pageInfo.suggested_rotation !== 0) {
+            headerText += ` <span style="color:var(--yellow);">Rotation: ${pageInfo.suggested_rotation}\u00b0</span>`;
+          }
+          if (pageInfo.sizes?.length) headerText += ` \u2014 Sizes: ${pageInfo.sizes.join(', ')}`;
+          header.innerHTML = headerText;
+          container.appendChild(header);
+
+          // Image with overlays
+          const imgWrap = document.createElement('div');
+          imgWrap.style.cssText = 'position:relative;display:inline-block;';
+
+          // Clone canvas at display size
+          const displayCanvas = document.createElement('canvas');
+          const maxW = 500;
+          const ratio = Math.min(maxW / rendered.width, 1);
+          displayCanvas.width = rendered.width * ratio;
+          displayCanvas.height = rendered.height * ratio;
+          const dCtx = displayCanvas.getContext('2d');
+          dCtx.drawImage(rendered.canvas, 0, 0, displayCanvas.width, displayCanvas.height);
+          imgWrap.appendChild(displayCanvas);
+
+          // Draw bounding boxes
+          const charts = pageInfo.charts || [];
+          charts.forEach((chart, idx) => {
+            if (!chart.box_2d || chart.box_2d.length !== 4) return;
+            const [yMin, xMin, yMax, xMax] = chart.box_2d;
+            const color = BBOX_COLORS[idx % BBOX_COLORS.length];
+
+            const box = document.createElement('div');
+            box.className = 'bbox-overlay';
+            box.style.borderColor = color;
+            box.style.left = `${(xMin / 1000) * 100}%`;
+            box.style.top = `${(yMin / 1000) * 100}%`;
+            box.style.width = `${((xMax - xMin) / 1000) * 100}%`;
+            box.style.height = `${((yMax - yMin) / 1000) * 100}%`;
+
+            const label = document.createElement('div');
+            label.className = 'bbox-label';
+            label.style.background = color;
+            label.style.color = 'white';
+            let labelText = chart.label || `Chart ${idx + 1}`;
+            if (chart.row_count) labelText += ` (${chart.row_count}r`;
+            if (chart.col_count_min) {
+              labelText += chart.col_count_min === chart.col_count_max
+                ? ` x ${chart.col_count_min}c`
+                : ` x ${chart.col_count_min}-${chart.col_count_max}c`;
+            }
+            if (chart.row_count) labelText += ')';
+            label.textContent = labelText;
+            box.appendChild(label);
+
+            imgWrap.appendChild(box);
+          });
+
+          container.appendChild(imgWrap);
+          resultsDiv.appendChild(container);
+        }
+
+        statusEl.textContent = 'Done';
+      } catch (e) {
+        console.error('BBox analysis failed:', e);
+        statusEl.textContent = `Error: ${e.message}`;
+        resultsDiv.innerHTML = `<p style="color:var(--red);padding:20px;">${escapeHtml(e.message)}</p>`;
+      } finally {
+        btn.disabled = false;
+        updateBboxRunButton();
+      }
     }
 
     // --- Init ---
