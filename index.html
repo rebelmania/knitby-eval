@@ -572,7 +572,10 @@
       if (!config?.fnUrl || !config?.password) throw new Error('Config not set');
       const res = await fetch(config.fnUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.key}`,
+        },
         body: JSON.stringify({ ...payload, password: config.password }),
       });
       if (res.status === 401) {
