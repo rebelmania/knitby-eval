@@ -4,15 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Knitby Pattern Eval Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
-  <script>
-    // Load pdf.js as a global
-    window.pdfjsReady = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs').then(m => {
-      window.pdfjsLib = m;
-      m.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
-      return m;
-    });
+  <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+    window.supabaseCreateClient = createClient;
+
+    import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+    window.pdfjsLib = pdfjsLib;
+    window.pdfjsReady = Promise.resolve(pdfjsLib);
+
+    // Signal that modules are loaded
+    window.modulesReady = true;
+    window.dispatchEvent(new Event('modules-ready'));
   </script>
   <style>
     :root {
@@ -1346,7 +1349,7 @@ Rules:
 
     // --- Init ---
 
-    (function init() {
+    function startApp() {
       const config = getConfig();
       if (!config) {
         document.getElementById('config-banner').style.display = 'block';
@@ -1355,9 +1358,15 @@ Rules:
         return;
       }
 
-      supabaseClient = supabase.createClient(config.url, config.key);
+      supabaseClient = window.supabaseCreateClient(config.url, config.key);
       loadCached();
-    })();
+    }
+
+    if (window.modulesReady) {
+      startApp();
+    } else {
+      window.addEventListener('modules-ready', startApp);
+    }
   </script>
 </body>
 </html>
