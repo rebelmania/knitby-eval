@@ -1193,7 +1193,10 @@ Rules:
       // Get PNG bytes
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       const arrayBuf = await blob.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+      const bytes = new Uint8Array(arrayBuf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
 
       return { canvas, base64, width: canvas.width, height: canvas.height };
     }
