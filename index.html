@@ -1352,9 +1352,11 @@ Rules:
           resultsDiv.innerHTML += `<div style="margin-bottom:12px;"><strong>Pattern:</strong> ${escapeHtml(parsed.pattern_name)}</div>`;
         }
 
-        for (const pageNum of sortedPages) {
-          const pageKey = String(pageNum);
-          const pageInfo = pages[pageKey];
+        for (let i = 0; i < sortedPages.length; i++) {
+          const pageNum = sortedPages[i];
+          // LLM numbers pages sequentially (1,2,3...) regardless of actual PDF page numbers
+          const llmKey = String(i + 1);
+          const pageInfo = pages[llmKey] || pages[String(pageNum)];
           const rendered = rotatedPageData[pageNum];
           if (!rendered || !pageInfo) continue;
 
