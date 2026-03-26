@@ -1226,8 +1226,8 @@ Rules:
 
     async function renderPageAtHighRes(pageNum) {
       const page = await bboxPdfDoc.getPage(pageNum);
-      // Render at 150 DPI equivalent (matching kPreviewScale)
-      const scale = 150 / 72;
+      // Render at 300 DPI for better chart detail
+      const scale = 300 / 72;
       const viewport = page.getViewport({ scale });
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
