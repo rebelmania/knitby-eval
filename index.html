@@ -1053,39 +1053,43 @@
     let bboxPageRotations = {}; // pageNum -> degrees (0, 90, 180, 270)
     const BBOX_COLORS = ['#7c6bf0', '#4caf50', '#ff9800', '#f44336', '#03a9f4', '#e91e63', '#cddc39', '#00bcd4'];
 
-    const DEFAULT_BBOX_PROMPT = `You are analyzing a single page from a knitting pattern PDF.
+    const DEFAULT_BBOX_PROMPT = `You are analyzing a single page from a knitting pattern PDF. For this page, determine:
 
-1. Determine if it has a photograph of the finished knitted garment.
-2. Find ALL distinct knitting charts (grids/diagrams with symbols, NOT just text instructions or thumbnails). A page often has multiple charts — look carefully for smaller charts (e.g. thumb, gusset, collar) that appear alongside a larger main chart. For each chart, provide a bounding box, label, and size association.
-   EXCLUDE: small thumbnail previews embedded in instruction text, schematic/construction diagrams, and photos. Only include grids large enough to have individually readable symbol cells.
-3. Identify the pattern name/title if it is prominently displayed on this page (often in a large, decorative, or stylized font).
+1. Whether it contains a photograph of the finished knitted garment.
+2. The pattern name/title if prominently displayed (large, decorative, or stylized font).
+3. All distinct knitting charts — grids with symbol cells for knitting. EXCLUDE photos, schematic diagrams, and small thumbnail previews of charts in instruction text.
 
-BOUNDING BOX INSTRUCTIONS:
-- For each distinct chart, provide a "box_2d" in [y_min, x_min, y_max, x_max] format
-- Coordinates are in 0-1000 scale (0 = top/left edge, 1000 = bottom/right edge)
-- The box should tightly enclose ONLY the chart grid area (the cells/symbols). Do NOT include row numbers, column numbers, chart titles, or legend/key labels in the bounding box
-- Only create separate bounding boxes for charts that are clearly distinct (different names, different stitch patterns, or separated by a title/heading). Do NOT split a single continuous chart into multiple boxes because of visual dividers, color changes, or section breaks within one grid.
-- Include a short "label" for each chart (e.g. "Left hand mitten", "Left hand mitten thumb", "Body chart", "Sleeve")
-- "row_count": the highest row number visible on the left or right edge of the chart. Only report what is printed — do not count grid lines. Omit if no row numbers are visible.
-- "col_count_min" and "col_count_max": the highest column number visible on the top or bottom edge. "col_count_max" is from the widest row; "col_count_min" is from the narrowest row. For rectangular charts these are the same. Only report what is printed — do not count grid lines. Omit if no column numbers are visible.
+CHART IDENTIFICATION:
+- A page typically contains one or two charts (e.g., a mitten body and a separate thumb). Avoid over-splitting — if in doubt, treat it as one chart.
+- A chart with a non-rectangular outline (widening for a gusset, tapering at the top) is still ONE chart.
+- Only separate into distinct charts when there is a clear large gap of empty grid between two independent knitted pieces.
 
-Return ONLY a JSON object:
+BOUNDING BOXES:
+- Format: "box_2d" as [y_min, x_min, y_max, x_max] in 0-1000 scale.
+- Tightly enclose only the filled cells/symbols belonging to that chart. When two charts sit near each other, each box should cover only its own cells — minimize overlap between boxes.
+- Exclude row/column numbers, titles, and legends.
+- "label": the chart name/title printed near the chart (e.g., "CHART 1A", "CHART 2B", "Left hand mitten"). Use the exact text as printed.
+- "row_count": highest row number printed on the chart edge. Omit if none visible.
+- "col_count_min" / "col_count_max": highest column number from narrowest/widest row. Same for rectangular charts. Omit if none visible.
+
+Return ONLY this JSON:
 {
-  "pattern_name": "Name of the Pattern",
+  "pattern_name": "Name" or null,
   "pages": {
     "1": {
       "has_photo": true,
-      "charts": []
+      "charts": [
+        {
+          "label": "CHART 1A",
+          "box_2d": [y_min, x_min, y_max, x_max],
+          "row_count": 79,
+          "col_count_min": 49,
+          "col_count_max": 49
+        }
+      ]
     }
   }
-}
-
-Rules:
-- "pattern_name": the pattern title if found on this page. null if not visible.
-- "has_photo": true if page has a photograph of the finished knitted item.
-- "charts": array of chart objects. Empty array [] if the page has no charts.
-- "sizes": array of size labels that this chart belongs to, based on any size text visible near the chart. Use empty array [] if no size is indicated or the chart applies to all sizes.
-- "box_2d": [y_min, x_min, y_max, x_max] in 0-1000 scale. Must have exactly 4 values.`;
+}`;
 
     function resetBboxPrompts() {
       document.getElementById('bbox-detection-prompt').value = DEFAULT_BBOX_PROMPT;
